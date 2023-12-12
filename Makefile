@@ -24,8 +24,8 @@ SIM?=RTL
 CARAVEL_LITE?=1
 
 # PDK switch varient
-export PDK?=sky130A
-#export PDK?=gf180mcuC
+#export PDK?=sky130A
+export PDK?=gf180mcuD
 export PDKPATH?=$(PDK_ROOT)/$(PDK)
 
 PYTHON_BIN ?= python3
@@ -84,8 +84,9 @@ ifeq ($(PDK),gf180mcuD)
 	CARAVEL_REPO := https://github.com/efabless/caravel-gf180mcu
 	CARAVEL_TAG := $(MPW_TAG)
 	#OPENLANE_TAG=ddfeab57e3e8769ea3d40dda12be0460e09bb6d9
-	export OPEN_PDKS_COMMIT?=78b7bc32ddb4b6f14f76883c2e2dc5b5de9d1cbc
-	export OPENLANE_TAG?=2023.07.19
+	#export OPEN_PDKS_COMMIT?=78b7bc32ddb4b6f14f76883c2e2dc5b5de9d1cbc
+	export OPEN_PDKS_COMMIT?=e0f692f46654d6c7c99fc70a0c94a080dab53571
+	export OPENLANE_TAG?=2023.10.16
 
 endif
 

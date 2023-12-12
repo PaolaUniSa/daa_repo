@@ -1,156 +1,533 @@
-// SPDX-FileCopyrightText: 2020 Efabless Corporation
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-// SPDX-License-Identifier: Apache-2.0
 
 `default_nettype none
-/*
- *-------------------------------------------------------------
- *
- * user_proj_example
- *
- * This is an example of a (trivially simple) user project,
- * showing how the user project can connect to the logic
- * analyzer, the wishbone bus, and the I/O pads.
- *
- * This project generates an integer count, which is output
- * on the user area GPIO pads (digital output only).  The
- * wishbone connection allows the project to be controlled
- * (start and stop) from the management SoC program.
- *
- * See the testbenches in directory "mprj_counter" for the
- * example programs that drive this user project.  The three
- * testbenches are "io_ports", "la_test1", and "la_test2".
- *
- *-------------------------------------------------------------
- */
 
-module user_proj_example #(
-    parameter BITS = 16
-)(
+module user_proj_example(
 `ifdef USE_POWER_PINS
-    inout vccd1,	// User area 1 1.8V supply
-    inout vssd1,	// User area 1 digital ground
+    inout vdd,	// User area 1 1.8V supply
+    inout vss,	// User area 1 digital ground
 `endif
 
     // Wishbone Slave ports (WB MI A)
     input wb_clk_i,
     input wb_rst_i,
-    input wbs_stb_i,
-    input wbs_cyc_i,
-    input wbs_we_i,
-    input [3:0] wbs_sel_i,
-    input [31:0] wbs_dat_i,
-    input [31:0] wbs_adr_i,
-    output wbs_ack_o,
-    output [31:0] wbs_dat_o,
-
-    // Logic Analyzer Signals
-    input  [127:0] la_data_in,
-    output [127:0] la_data_out,
-    input  [127:0] la_oenb,
-
+	
     // IOs
-    input  [BITS-1:0] io_in,
-    output [BITS-1:0] io_out,
-    output [BITS-1:0] io_oeb,
-
-    // IRQ
-    output [2:0] irq
+    input  [17-1:0] io_in,
+    output [10-1:0] io_out,
+    output [10-1:0] io_oeb//,
 );
-    wire clk;
-    wire rst;
 
-    wire [BITS-1:0] rdata; 
-    wire [BITS-1:0] wdata;
-    wire [BITS-1:0] count;
-
-    wire valid;
-    wire [3:0] wstrb;
-    wire [BITS-1:0] la_write;
-
-    // WB MI A
-    assign valid = wbs_cyc_i && wbs_stb_i; 
-    assign wstrb = wbs_sel_i & {4{wbs_we_i}};
-    assign wbs_dat_o = {{(32-BITS){1'b0}}, rdata};
-    assign wdata = wbs_dat_i[BITS-1:0];
-
-    // IO
-    assign io_out = count;
-    assign io_oeb = {(BITS){rst}};
-
-    // IRQ
-    assign irq = 3'b000;	// Unused
-
-    // LA
-    assign la_data_out = {{(128-BITS){1'b0}}, count};
-    // Assuming LA probes [63:32] are for controlling the count register  
-    assign la_write = ~la_oenb[63:64-BITS] & ~{BITS{valid}};
-    // Assuming LA probes [65:64] are for controlling the count clk & reset  
-    assign clk = (~la_oenb[64]) ? la_data_in[64]: wb_clk_i;
-    assign rst = (~la_oenb[65]) ? la_data_in[65]: wb_rst_i;
-
-    counter #(
-        .BITS(BITS)
-    ) counter(
-        .clk(clk),
-        .reset(rst),
-        .ready(wbs_ack_o),
-        .valid(valid),
-        .rdata(rdata),
-        .wdata(wbs_dat_i[BITS-1:0]),
-        .wstrb(wstrb),
-        .la_write(la_write),
-        .la_input(la_data_in[63:64-BITS]),
-        .count(count)
+	assign io_oeb = 10'd0;
+	//assign io_out = io_in;
+	
+	NEwithDAA NEwithDAA_u (
+		.InPE(io_in[16:13]),
+		.clk(wb_clk_i),
+		.enable(io_in[12]),
+		.clear(io_in[11]),
+		.NEP(io_in[10]),
+		.SignExEn(io_in[9]),
+		.rst(wb_rst_i),
+		.InputSel(io_in[8:7]),
+		.w(io_in[6:4]),
+		.EPcount(io_in[3:0]),
+		.o (io_out)
     );
+	
 
 endmodule
 
-module counter #(
-    parameter BITS = 16
-)(
-    input clk,
-    input reset,
-    input valid,
-    input [3:0] wstrb,
-    input [BITS-1:0] wdata,
-    input [BITS-1:0] la_write,
-    input [BITS-1:0] la_input,
-    output reg ready,
-    output reg [BITS-1:0] rdata,
-    output reg [BITS-1:0] count
+
+
+module NEwithDAA (
+  input [3:0] InPE,
+  input clk,
+  input enable,
+  input clear,
+  input NEP,
+  input SignExEn,
+  input rst,
+  input [1:0] InputSel,
+  input [2:0] w,
+  input [3:0] EPcount,
+  output reg [9:0] o
 );
 
-    always @(posedge clk) begin
-        if (reset) begin
-            count <= 1'b0;
-            ready <= 1'b0;
-        end else begin
-            ready <= 1'b0;
-            if (~|la_write) begin
-                count <= count + 1'b1;
-            end
-            if (valid && !ready) begin
-                ready <= 1'b1;
-                rdata <= count;
-                if (wstrb[0]) count[7:0]   <= wdata[7:0];
-                if (wstrb[1]) count[15:8]  <= wdata[15:8];
-            end else if (|la_write) begin
-                count <= la_write & la_input;
-            end
-        end
+
+
+  wire [2:0] expResult;
+  wire [17:0] eResult;
+  wire [9:0] result;
+  
+   always @* begin
+     case (InputSel)
+        4'b00: o <= result;
+        4'b01: o <= {eResult[6:0],expResult};
+        4'b10: o <= eResult[16:7];
+        default: o <= {9'b000000000, eResult[17]};
+     endcase
     end
+  wire s;
+  wire [1:0] c;
+  wire [2:0] w_reg0;
+  reg [2:0] w_reg;
+  wire [3:0] InPE_reg0;
+  reg [3:0] InPE_reg;
+  reg [4:0] InPE_aux;
+  reg [5:0] saux,a, a_aux;
+  
+  D_FF #(3) w_FF (
+    .d(w),
+    .clk(clk),
+    .enable(enable),
+    .clear(clear),
+    .rst(rst),
+    .q(w_reg0)
+  );
+  
+always @* begin
+     w_reg=w_reg0;
+end
+
+  D_FF #(4) InPE_FF (
+    .d(InPE),
+    .clk(clk),
+    .enable(enable),
+    .rst(rst),
+    .clear(clear),
+    .q(InPE_reg0)
+  );
+always @* begin
+     InPE_reg=InPE_reg0;
+end
+  always @(*) begin
+    case (SignExEn)
+      1'b1: InPE_aux = {InPE_reg[3], InPE_reg};
+      default: InPE_aux = {1'b0, InPE_reg};
+    endcase
+  end
+
+  BoothEncoderMod Encoder (
+    .x2(w_reg[2]),
+    .x1(w_reg[1]),
+    .x0(w_reg[0]),
+    .sign(s),
+    .C(c)
+  );
+
+  always @* begin
+    case (c)
+      2'b10: a_aux = {InPE_aux, 1'b0};
+      2'b01: a_aux = {InPE_aux[4], InPE_aux};
+      default: a_aux = 6'b0;
+    endcase
+  end
+
+  always @* begin
+    saux<= {s,s,s,s,s,s};
+      a <= saux ^ a_aux;
+  end
+
+  DAAforNE DAA (
+    .x(a),
+    .clk(clk),
+    .enable(enable),
+    .clear(clear),
+    .NEP(NEP),
+    .Cin(s),
+    .rst(rst),
+    .EPcount(EPcount),
+    .expResult(expResult),
+    .eResult(eResult),
+    .result(result)
+  );
 
 endmodule
+
+module BoothEncoderMod (
+  input x2,
+  input x1,
+  input x0,
+  output reg sign,
+  output reg [1:0] C
+);
+
+  always @(x2 or x1 or x0) begin
+    sign = x2 & ~(x2 & x1 & x0);
+    C[0] = x0 ^ x1;
+    C[1] = (x0 & x1 & ~x2) | (x2 & ~x1 & ~x0);
+  end
+
+endmodule
+
+module CU_MAC2(
+    input clk,
+    input enable,
+    input clear,
+    input a,
+    input b,
+    input [1:0] res,
+    input [2:0] Nshift,
+    input co,
+    input rst,
+    output reg inc,
+    output reg decr
+);
+
+reg inc_aux, decr_aux;
+wire inc_reg, decr_reg;
+
+
+always @(posedge clk or negedge rst) begin
+    if (!rst)
+        inc_aux <= {1'b0};
+    else if (enable)
+        if (clear)
+           inc_aux <= {1'b0};
+        else
+            inc_aux <= (~a & ~b & ~co & res[1]) | (a & b & co & ~res[1]) & ~&Nshift[2:0];
+end
+
+always @(posedge clk or negedge rst) begin
+    if (!rst)
+        decr_aux <= {1'b0};
+    else if (enable)
+        if (clear)
+           decr_aux <= {1'b0};
+        else
+            decr_aux <= ~inc_aux & (~co & (res[1] ^ res[0])) & ~|Nshift;
+end
+
+D_FF #(1) inc_FF (
+    .d(inc_aux),
+    .clk(clk),
+    .enable(enable),
+    .rst(rst),
+    .clear(clear),
+    .q(inc_reg)
+);
+
+D_FF #(1) decr_FF (
+    .d(decr_aux),
+    .clk(clk),
+    .enable(enable),
+    .rst(rst),
+    .clear(clear),
+    .q(decr_reg)
+);
+
+always @* begin
+    inc <= inc_reg;
+    decr <= decr_reg;
+end
+
+endmodule
+
+module D_FF #(parameter N=4) (
+    input [N-1:0] d,
+    input clk,
+    input enable,
+    input clear,
+    input rst,
+    output reg [N-1:0] q
+);
+
+//always @(posedge clk or negedge rst) begin
+//    if (!rst)
+//        q <= {N{1'b0}};
+//    else if (enable)
+//        if (clear)
+//           q <= {N{1'b0}};
+//        else
+//            q <= d;
+//end
+
+always @(posedge clk or negedge rst) begin
+    if (!rst)
+        q <= {N{1'b0}};
+    else if (enable)
+        if (clear)
+           q <= {N{1'b0}};
+        else
+            q <= d;
+end
+//always @(posedge clk or negedge rst) begin
+//    if (!rst)
+//        q <= {N{1'b0}};
+//    else if (clear)
+//        q <= {N{1'b0}};
+//        else if (enable)
+//            q <= d;
+//end
+
+
+
+endmodule
+
+module DAAforNE (
+    input [5:0] x,
+    input clk,
+    input enable,
+    input clear,
+    input NEP,
+    input Cin,
+    input rst,
+    input [3:0] EPcount,
+    output reg [2:0] expResult,
+    output reg [17:0] eResult,
+    output reg [9:0] result
+);
+
+wire [17:0] inSaveFF;
+reg [5:0] x_reg;
+wire [9:0] b, res_reg, aux;
+reg [9:0] a, res, inc_aux, decr_aux;
+reg [10:0] res_aux, CinAux;
+wire [9:0] r_a, OutAllined1;
+reg [9:0] r_a1, r_a2;
+wire [7:0] x_reg_se_aux;
+reg [7:0] x_reg_se;
+reg IncOrDec_sel, IncOrDec_sel2, selAllineMUX2, selSaveMUX, co;
+wire NEP_reg2, inc, decr, co_reg;
+reg Cin_reg;
+reg En0, En1, En2, En3, En4, En5, En6, En7, En8;
+wire [2:0] N_shift;
+wire [1:0] r_a_save_aux;
+reg [1:0] r_a_save;
+
+//D_FF #(6) x_FF (.d(x), .clk(clk), .enable(enable), .clear(clear), .q(x_reg));
+//D_FF #(1) Cin_FF (.d(Cin), .clk(clk), .enable(enable), .clear(clear), .q(Cin_reg));
+//D_FF #(1) NEP_FF (.d(NEP), .clk(clk), .enable(enable), .clear(clear), .q(NEP_reg));
+//D_FF #(1) NEP_FF2 (.d(NEP_reg), .clk(clk), .enable(enable), .clear(clear), .q(NEP_reg2));
+D_FF #(1) NEP_FF2 (.d(NEP), .clk(clk),     .rst(rst), .enable(enable), .clear(clear), .q(NEP_reg2));
+
+always @* begin
+    x_reg = x;
+    Cin_reg = Cin;
+end
+
+always @* begin
+    case (x_reg[5])
+        1'b1: x_reg_se = {2'b11, x_reg};
+        default: x_reg_se = {2'b00, x_reg};
+    endcase
+end
+
+ShiftRight_2  LogShift (.i(x_reg_se), .N_shift(N_shift), .o(x_reg_se_aux));
+always @* begin
+    case (x_reg_se_aux[7])
+        1'b1: a = {2'b11, x_reg_se_aux};
+        default: a = {2'b00, x_reg_se_aux[6:0]};
+    endcase
+end
+ShiftCounter2 ShiftCounter (.clk(clk), .clear(clear),     .rst(rst),.enable(enable), .inc(inc), .dec(decr), .shiftCount(N_shift));
+
+always @* begin
+    CinAux = {10'b0000000000, Cin_reg};
+end
+
+always @* begin
+    res_aux = $signed(a) + $signed(b) + $signed(CinAux);
+    res = res_aux[9:0];
+    co = res_aux[10];
+end
+
+CU_MAC2 CU (.clk(clk), .clear(clear), .enable(enable),    .rst(rst), .a(a[9]), .b(b[9]), .res(res[9:8]), .Nshift(N_shift), .co(co), .inc(inc), .decr(decr));
+
+D_FF #(10) res_FF (.d(res), .clk(clk), .enable(enable),     .rst(rst), .clear(clear), .q(res_reg));
+D_FF #(1) Co_FF (.d(co), .clk(clk), .enable(enable),     .rst(rst), .clear(clear), .q(co_reg));
+
+always @* begin
+    IncOrDec_sel = ~inc & decr;
+    inc_aux = {co_reg, res_reg[9:1]};
+    decr_aux = {res_reg[8:0], 1'b0};
+end
+
+Mux_2 #(10) IncOrDec_MUX (.i0(inc_aux), .i1(decr_aux), .sel(IncOrDec_sel), .o(aux));
+always @* begin
+    IncOrDec_sel2 = inc | decr;
+end
+Mux_2 #(10) IncOrDec_MUX2 (.i0(res_reg), .i1(aux), .sel(IncOrDec_sel2), .o(r_a));
+always @* begin
+    r_a1 = {r_a[9], r_a[9:1]};
+    r_a2 = {r_a[9], r_a[9], r_a[9:2]};
+end
+Mux_2 #(10) AllignMUX1 (.i0(r_a2), .i1(r_a1), .sel(N_shift[0]), .o(OutAllined1));
+
+always @* begin 
+    selAllineMUX2 = ~|N_shift[2:1] & NEP_reg2;
+end
+Mux_2 #(10) AllignMUX2 (.i0(r_a), .i1(OutAllined1), .sel(selAllineMUX2), .o(b));
+
+always @* begin 
+    r_a_save = {r_a[0], 1'b0};
+    selSaveMUX = N_shift[0];
+end
+
+Mux_2 #(2) SaveMUX (.i0(r_a[1:0]), .i1(r_a_save), .sel(selSaveMUX), .o(r_a_save_aux));
+
+always @* begin
+     En0 = (EPcount == 4'b0000 && ~|N_shift[2:1] && NEP == 1'b1);
+     En1 = (EPcount == 4'b0001 && ~|N_shift[2:1]  && NEP == 1'b1);
+     En2 = (EPcount == 4'b0010 && ~|N_shift[2:1]  && NEP == 1'b1);
+     En3 = (EPcount == 4'b0011 && ~|N_shift[2:1]  && NEP == 1'b1);
+     En4 = (EPcount == 4'b0100 && ~|N_shift[2:1]  && NEP == 1'b1);
+     En5 = (EPcount == 4'b0101 && ~|N_shift[2:1]  && NEP == 1'b1);
+     En6 = (EPcount == 4'b0110 && ~|N_shift[2:1]  && NEP == 1'b1);
+     En7 = (EPcount == 4'b0111 && ~|N_shift[2:1]  && NEP == 1'b1);
+     En8 = (EPcount == 4'b1000 && ~|N_shift[2:1]  && NEP == 1'b1);
+end
+
+D_FF #(2) Save_FF0 (.d(r_a_save_aux), .clk(clk), .enable(En0), .clear(clear),     .rst(rst), .q(inSaveFF[1:0]));
+D_FF #(2) Save_FF1 (.d(r_a_save_aux), .clk(clk), .enable(En1), .clear(clear), .rst(rst),.q(inSaveFF[3:2]));
+D_FF #(2) Save_FF2 (.d(r_a_save_aux), .clk(clk), .enable(En2), .clear(clear), .rst(rst),.q(inSaveFF[5:4]));
+D_FF #(2) Save_FF3 (.d(r_a_save_aux), .clk(clk), .enable(En3), .clear(clear), .rst(rst),.q(inSaveFF[7:6]));
+D_FF #(2) Save_FF4 (.d(r_a_save_aux), .clk(clk), .enable(En4), .clear(clear), .rst(rst),.q(inSaveFF[9:8]));
+D_FF #(2) Save_FF5 (.d(r_a_save_aux), .clk(clk), .enable(En5), .clear(clear), .rst(rst),.q(inSaveFF[11:10]));
+D_FF #(2) Save_FF6 (.d(r_a_save_aux), .clk(clk), .enable(En6), .clear(clear), .rst(rst),.q(inSaveFF[13:12]));
+D_FF #(2) Save_FF7 (.d(r_a_save_aux), .clk(clk), .enable(En7), .clear(clear), .rst(rst),.q(inSaveFF[15:14]));
+D_FF #(2) Save_FF8 (.d(r_a_save_aux), .clk(clk), .enable(En8), .clear(clear), .rst(rst),.q(inSaveFF[17:16]));
+
+always @* begin
+    eResult=inSaveFF;
+    result=b;
+    expResult=N_shift;
+end
+
+endmodule
+
+module Mux_2 #(parameter N=4) (
+    input [N-1:0] i0,
+    input [N-1:0] i1,
+    output reg [N-1:0] o,
+    input sel
+);
+
+always @* begin
+    if (sel)
+        o = i1;
+    else
+        o = i0;
+end
+
+endmodule
+
+module ShiftCounter2(
+    input inc,
+    input dec,
+    input clk,
+    input clear,
+    input rst,
+    input enable,
+    output reg [2:0] shiftCount
+);
+
+reg [2:0] incDecr, a, b, res;
+reg incDecr_sel, idle_sel;
+
+always @* begin
+    incDecr_sel <= ~inc & dec;
+    idle_sel <= inc | dec;
+    res=a+b;
+    shiftCount <= res;
+end
+
+always @* begin
+    if (incDecr_sel)
+        incDecr <= 3'b111;
+    else
+        incDecr <= 3'b001;
+end
+
+always @* begin
+    if (idle_sel)
+        a <=incDecr;
+    else
+        a <= 3'b0;
+end
+
+always @(posedge clk or negedge rst) begin
+    if (!rst)
+        b <= {3{1'b0}};
+    else if (enable)
+        if (clear)
+           b <= {3{1'b0}};
+        else
+            b <= res;
+end
+endmodule
+
+
+module ShiftRight_2(
+    input [7:0] i,
+    output reg [7:0] o,
+    input [2:0] N_shift
+);
+
+wire [7:0] i_4_in, i_4_out;
+wire [7:0] i_2_in, i_2_out;
+wire [7:0] i_1_out;
+reg [7:0] i_1_in;
+
+Log_shifter #(4) shifter_4 
+(
+    .i(i),
+    .o(i_4_in)
+);
+
+Mux_2 #(8) shift_4_MUX (
+    .i0(i),
+    .i1(i_4_in),
+    .o(i_4_out),
+    .sel(N_shift[2])
+);
+
+Log_shifter #(2) shifter_2 (
+    .i(i_4_out),
+    .o(i_2_in)
+);
+
+Mux_2 #(8) shift_2_MUX (
+    .i0(i_4_out),
+    .i1(i_2_in),
+    .o(i_2_out),
+    .sel(N_shift[1])
+);
+
+always @* begin
+     i_1_in = {i[7], i_2_out[7:1]};
+end
+
+Mux_2 #(8) shift_1_MUX (
+    .i0(i_2_out),
+    .i1(i_1_in),
+    .o(i_1_out),
+    .sel(N_shift[0])
+);
+
+always @* begin
+    o = i_1_out;
+end
+
+endmodule
+
+
+
+module Log_shifter #(parameter N=4)(
+    input [7:0] i,
+    output reg [7:0] o
+);
+
+always @* begin
+    if (i[7])
+        o = {{N{1'b1}},i[7:N]};
+    else
+        o = {{N{1'b0}},i[7:N]};
+end
+
+endmodule
+
+
+
+
 `default_nettype wire
